@@ -1,1 +1,8 @@
-{"fetched_at": null, "source": "Cameron County Clerk Portal", "date_range": null, "total": 0, "with_address": 0, "records": []}
+{
+  "fetched_at": "2026-05-13T04:54:19.166211",
+  "source": "Cameron County Clerk Portal",
+  "date_range": "2026-05-06 to 2026-05-13",
+  "total": 0,
+  "with_address": 0,
+  "records": []
+}
