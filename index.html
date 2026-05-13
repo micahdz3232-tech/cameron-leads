@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APEX — Cameron County Motivated Seller Leads</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--void:#030508;--panel:#0a1628;--panel2:#0d1f3c;--border:rgba(0,200,255,0.12);--cyan:#00c8ff;--gold:#f0b429;--red:#ff4757;--green:#00e676;--purple:#b14aed;--text-primary:#e8f4fd;--text-dim:rgba(120,160,200,0.4);}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--void);color:var(--text-primary);font-family:'Rajdhani',sans-serif;padding:24px;}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--border);}
+h1{font-family:'Orbitron',monospace;font-size:20px;font-weight:900;letter-spacing:3px;color:var(--cyan);}
+.sub{font-family:'Space Mono',monospace;font-size:10px;color:var(--text-dim);margin-top:4px;}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px;}
+.stat-label{font-family:'Space Mono',monospace;font-size:9px;color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;}
+.stat-value{font-family:'Orbitron',monospace;font-size:24px;font-weight:700;}
+.controls{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
+input,select{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:8px 14px;color:var(--text-primary);font-family:'Rajdhani',sans-serif;font-size:14px;outline:none;}
+input{flex:1;min-width:200px;}
+button{background:var(--cyan);color:var(--void);border:none;border-radius:6px;padding:8px 20px;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:1px;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+thead th{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:2px;color:var(--text-dim);text-transform:uppercase;padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);}
+tbody tr{border-bottom:1px solid rgba(0,200,255,0.04);cursor:pointer;}
+tbody tr:hover{background:rgba(0,200,255,0.05);}
+td{padding:10px 12px;vertical-align:middle;}
+.score{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;font-family:'Orbitron',monospace;font-size:12px;font-weight:700;border:2px solid;}
+.flag{display:inline-block;padding:1px 6px;border-radius:3px;font-family:'Space Mono',monospace;font-size:9px;margin:1px;border:1px solid;}
+.tag-lp{background:rgba(255,71,87,0.1);border-color:rgba(255,71,87,0.3);color:var(--red);}
+.tag-fc{background:rgba(240,180,41,0.1);border-color:rgba(240,180,41,0.3);color:var(--gold);}
+.tag-jud{background:rgba(177,74,237,0.1);border-color:rgba(177,74,237,0.3);color:var(--purple);}
+.tag-tax{background:rgba(255,71,87,0.1);border-color:rgba(255,71,87,0.3);color:var(--red);}
+.tag-other{background:rgba(0,200,255,0.1);border-color:rgba(0,200,255,0.3);color:var(--cyan);}
+.empty{text-align:center;padding:60px;font-family:'Space Mono',monospace;font-size:11px;color:var(--text-dim);}
+a.ext{color:var(--cyan);text-decoration:none;font-size:11px;}
+a.ext:hover{text-decoration:underline;}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>APEX — CAMERON COUNTY LEADS</h1>
+    <div class="sub" id="meta">Loading...</div>
+  </div>
+  <button onclick="downloadCSV()">⬇ Export CSV</button>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="stat-label">Total Records</div><div class="stat-value" id="s-total" style="color:var(--cyan)">—</div></div>
+  <div class="stat"><div class="stat-label">With Address</div><div class="stat-value" id="s-addr" style="color:var(--green)">—</div></div>
+  <div class="stat"><div class="stat-label">High Score (70+)</div><div class="stat-value" id="s-high" style="color:var(--red)">—</div></div>
+  <div class="stat"><div class="stat-label">Last Updated</div><div class="stat-value" id="s-date" style="font-size:14px;color:var(--gold)">—</div></div>
+</div>
+
+<div class="controls">
+  <input type="text" id="search" placeholder="Search owner, address, doc type..." oninput="filter()">
+  <select id="typeFilter" onchange="filter()">
+    <option value="">All Doc Types</option>
+    <option value="LP">Lis Pendens</option>
+    <option value="NOFC">Notice of Foreclosure</option>
+    <option value="JUD">Judgment</option>
+    <option value="LNIRS">IRS Lien</option>
+    <option value="LNMECH">Mechanic Lien</option>
+    <option value="PRO">Probate</option>
+    <option value="TAXDEED">Tax Deed</option>
+  </select>
+  <select id="scoreFilter" onchange="filter()">
+    <option value="0">All Scores</option>
+    <option value="70">Score 70+</option>
+    <option value="50">Score 50+</option>
+    <option value="40">Score 40+</option>
+  </select>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Score</th>
+      <th>Owner</th>
+      <th>Doc Type</th>
+      <th>Filed</th>
+      <th>Amount</th>
+      <th>Property Address</th>
+      <th>Flags</th>
+      <th>Link</th>
+    </tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<script>
+let ALL_RECORDS = [];
+
+function scoreColor(s) {
+  if (s >= 70) return 'var(--red)';
+  if (s >= 50) return 'var(--gold)';
+  if (s >= 40) return 'var(--cyan)';
+  return 'rgba(120,160,200,0.5)';
+}
+
+function flagClass(f) {
+  if (f.includes('pendens') || f.includes('foreclosure')) return 'tag-lp';
+  if (f.includes('Judgment')) return 'tag-jud';
+  if (f.includes('Tax') || f.includes('IRS')) return 'tag-tax';
+  return 'tag-other';
+}
+
+function render(records) {
+  const tbody = document.getElementById('tbody');
+  if (!records.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No records found. Run the scraper to populate data.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = records.map(r => `
+    <tr>
+      <td><div class="score" style="border-color:${scoreColor(r.score)};color:${scoreColor(r.score)}">${r.score}</div></td>
+      <td><strong>${r.owner || '—'}</strong><br><span style="font-size:11px;color:var(--text-dim)">${r.grantee || ''}</span></td>
+      <td><span class="flag tag-other">${r.doc_type}</span><br><span style="font-size:10px;color:var(--text-dim)">${r.cat_label}</span></td>
+      <td style="font-family:'Space Mono',monospace;font-size:11px">${r.filed || '—'}</td>
+      <td style="font-family:'Space Mono',monospace;font-size:12px;color:var(--red)">${r.amount ? '$'+Number(r.amount).toLocaleString() : '—'}</td>
+      <td style="font-size:12px">${r.prop_address ? r.prop_address+', '+r.prop_city+' '+r.prop_zip : '—'}</td>
+      <td>${(r.flags||[]).map(f=>`<span class="flag ${flagClass(f)}">${f}</span>`).join(' ')}</td>
+      <td>${r.clerk_url ? `<a class="ext" href="${r.clerk_url}" target="_blank">View →</a>` : '—'}</td>
+    </tr>
+  `).join('');
+}
+
+function filter() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const t = document.getElementById('typeFilter').value;
+  const minScore = parseInt(document.getElementById('scoreFilter').value) || 0;
+  const filtered = ALL_RECORDS.filter(r => {
+    const text = JSON.stringify(r).toLowerCase();
+    return (!q || text.includes(q))
+      && (!t || r.doc_type === t)
+      && (r.score >= minScore);
+  });
+  render(filtered);
+}
+
+function downloadCSV() {
+  const cols = ['score','owner','doc_type','cat_label','filed','amount','prop_address','prop_city','prop_state','prop_zip','mail_address','mail_city','mail_state','mail_zip','flags','clerk_url'];
+  const rows = [cols.join(',')];
+  ALL_RECORDS.forEach(r => {
+    rows.push(cols.map(c => {
+      const v = Array.isArray(r[c]) ? r[c].join('|') : (r[c] || '');
+      return '"'+String(v).replace(/"/g,'""')+'"';
+    }).join(','));
+  });
+  const blob = new Blob([rows.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'cameron_leads_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+}
+
+fetch('records.json?'+Date.now())
+  .then(r => r.json())
+  .then(data => {
+    ALL_RECORDS = data.records || [];
+    document.getElementById('meta').textContent =
+      `${data.source} · ${data.date_range} · Fetched: ${data.fetched_at ? new Date(data.fetched_at).toLocaleString() : 'Never'}`;
+    document.getElementById('s-total').textContent = data.total || 0;
+    document.getElementById('s-addr').textContent = data.with_address || 0;
+    document.getElementById('s-high').textContent = ALL_RECORDS.filter(r=>r.score>=70).length;
+    document.getElementById('s-date').textContent = data.fetched_at ? new Date(data.fetched_at).toLocaleDateString() : 'Never';
+    render(ALL_RECORDS);
+  })
+  .catch(() => {
+    document.getElementById('meta').textContent = 'No data yet — run the scraper first';
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="8" class="empty">Run: python scraper/fetch.py</td></tr>';
+  });
+</script>
+</body>
+</html>
