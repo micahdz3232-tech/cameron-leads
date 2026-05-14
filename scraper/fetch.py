@@ -1,4 +1,4 @@
-import asyncio, json, csv, os, re, zipfile, io, time, logging
+import asyncio, json, csv, os, re, io, time, logging
 from datetime import datetime, timedelta
 from pathlib import Path
 import requests
@@ -6,7 +6,13 @@ import requests
 LOOKBACK_DAYS = int(os.environ.get('LOOKBACK_DAYS', '30'))
 CLERK_BASE = "https://cameron.tx.publicsearch.us"
 
-TARGET_DOC_TYPES = {"LP":"Lis Pendens","NOFC":"Notice of Foreclosure","TAXDEED":"Tax Deed","JUD":"Judgment","CCJ":"Certified Judgment","DRJUD":"Domestic Judgment","LNCORPTX":"Corp Tax Lien","LNIRS":"IRS Lien","LNFED":"Federal Lien","LN":"Lien","LNMECH":"Mechanic Lien","LNHOA":"HOA Lien","MEDLN":"Medicaid Lien","PRO":"Probate","NOC":"Notice of Commencement","RELLP":"Release Lis Pendens"}
+TARGET_DOC_TYPES = {
+    "LP":"Lis Pendens","NOFC":"Notice of Foreclosure","TAXDEED":"Tax Deed",
+    "JUD":"Judgment","CCJ":"Certified Judgment","DRJUD":"Domestic Judgment",
+    "LNCORPTX":"Corp Tax Lien","LNIRS":"IRS Lien","LNFED":"Federal Lien",
+    "LN":"Lien","LNMECH":"Mechanic Lien","LNHOA":"HOA Lien",
+    "MEDLN":"Medicaid Lien","PRO":"Probate","NOC":"Notice of Commencement","RELLP":"Release Lis Pendens",
+}
 OUTPUT_DIRS = ["docs", "data"]
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -22,7 +28,7 @@ def compute_score(record):
     if dt == "NOFC": flags.append("Pre-foreclosure"); score += 10
     if dt in ("JUD","CCJ","DRJUD"): flags.append("Judgment lien"); score += 10
     if dt in ("LNCORPTX","LNIRS","LNFED","TAXDEED"): flags.append("Tax lien"); score += 10
-    if dt in ("LN","LNMECH","LNHOA","MEDLN"): flags.append("Mechanic lien" if dt=="LNMECH" else "Lien"); score += 10
+    if dt in ("LN","LNMECH","LNHOA","MEDLN"): flags.append("Lien"); score += 10
     if dt == "PRO": flags.append("Probate / estate"); score += 10
     if "Lis pendens" in flags and "Pre-foreclosure" in flags: score += 20
     if amount > 100000: score += 15; flags.append("High debt >$100k")
@@ -46,122 +52,140 @@ async def scrape_with_playwright(lookback_days=30):
     log.info(f"Scraping {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox","--disable-dev-shm-usage","--disable-gpu"])
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--disable-web-security"]
+        )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width":1280,"height":800}
+            viewport={"width":1920,"height":1080},
+            java_script_enabled=True,
         )
         page = await context.new_page()
 
+        # Intercept ALL JSON responses
         async def handle_response(response):
             try:
-                if response.status == 200 and "json" in response.headers.get("content-type",""):
-                    data = await response.json()
-                    items = data.get("records") or data.get("results") or data.get("data") or []
-                    if isinstance(data, list): items = data
-                    for item in items:
-                        if isinstance(item, dict):
-                            dt = item.get("docType") or item.get("doc_type") or item.get("documentType") or ""
-                            dtl = TARGET_DOC_TYPES.get(dt, dt)
-                            doc_num = str(item.get("docNum") or item.get("instrumentNumber") or item.get("id") or "")
-                            filed_raw = item.get("recordedDate") or item.get("filed") or item.get("instrumentDate") or ""
-                            try: filed = datetime.strptime(str(filed_raw)[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
-                            except:
-                                try: filed = datetime.strptime(str(filed_raw)[:10], "%m/%d/%Y").strftime("%Y-%m-%d")
-                                except: filed = str(filed_raw)[:10] if filed_raw else ""
-                            grantor = str(item.get("grantor") or item.get("grantorName") or item.get("name") or "").upper().strip()
-                            grantee = str(item.get("grantee") or item.get("granteeName") or "").upper().strip()
-                            try: amount = float(re.sub(r"[^0-9.]", "", str(item.get("amount") or item.get("docAmount") or 0)) or 0)
-                            except: amount = 0.0
-                            doc_id = item.get("id") or item.get("docId") or doc_num
-                            clerk_url = item.get("url") or item.get("link") or (f"{CLERK_BASE}/doc/{doc_id}" if doc_id else "")
-                            if doc_num or filed or grantor:
-                                api_records.append({"doc_num":doc_num,"doc_type":dt,"cat":dt,"cat_label":dtl,"filed":filed,"owner":grantor,"grantee":grantee,"amount":amount,"legal":str(item.get("legalDescription") or "")[:200],"clerk_url":clerk_url})
-                    if api_records: log.info(f"API intercepted: {len(api_records)} records so far")
+                url = response.url
+                if response.status == 200:
+                    ct = response.headers.get("content-type","")
+                    if "json" in ct:
+                        try:
+                            data = await response.json()
+                            items = []
+                            if isinstance(data, list): items = data
+                            elif isinstance(data, dict):
+                                items = (data.get("records") or data.get("results") or
+                                        data.get("data") or data.get("items") or
+                                        data.get("searchResults") or [])
+                            if items:
+                                log.info(f"API hit: {url[:80]} -> {len(items)} items")
+                                for item in items:
+                                    if not isinstance(item, dict): continue
+                                    dt = item.get("docType") or item.get("doc_type") or item.get("documentType") or item.get("type") or ""
+                                    dtl = TARGET_DOC_TYPES.get(dt, dt or "Record")
+                                    doc_num = str(item.get("docNum") or item.get("instrumentNumber") or item.get("id") or item.get("docId") or "")
+                                    filed_raw = item.get("recordedDate") or item.get("filed") or item.get("instrumentDate") or item.get("date") or ""
+                                    try: filed = datetime.strptime(str(filed_raw)[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
+                                    except:
+                                        try: filed = datetime.strptime(str(filed_raw)[:10], "%m/%d/%Y").strftime("%Y-%m-%d")
+                                        except: filed = str(filed_raw)[:10] if filed_raw else ""
+                                    grantor = str(item.get("grantor") or item.get("grantorName") or item.get("name") or item.get("owner") or "").upper().strip()
+                                    grantee = str(item.get("grantee") or item.get("granteeName") or "").upper().strip()
+                                    try: amount = float(re.sub(r"[^0-9.]", "", str(item.get("amount") or item.get("docAmount") or item.get("consideration") or 0)) or 0)
+                                    except: amount = 0.0
+                                    doc_id = item.get("id") or item.get("docId") or doc_num
+                                    clerk_url = item.get("url") or item.get("link") or (f"{CLERK_BASE}/doc/{doc_id}" if doc_id else "")
+                                    if doc_num or filed or grantor:
+                                        api_records.append({"doc_num":doc_num,"doc_type":dt,"cat":dt,"cat_label":dtl,"filed":filed,"owner":grantor,"grantee":grantee,"amount":amount,"legal":str(item.get("legalDescription") or "")[:200],"clerk_url":clerk_url})
+                        except Exception as je:
+                            pass
             except: pass
 
         page.on("response", handle_response)
+
         doc_types = ",".join(TARGET_DOC_TYPES.keys())
+        url = f"{CLERK_BASE}/results?department=RP&_docTypes={doc_types}&recordedDateRange={date_from},{date_to}&searchType=quickSearch&limit=500&offset=0&viewType=list"
 
-        for attempt in range(3):
-            try:
-                url = f"{CLERK_BASE}/results?department=RP&_docTypes={doc_types}&recordedDateRange={date_from},{date_to}&searchType=quickSearch&limit=500&offset=0&viewType=list"
-                log.info(f"Loading page (attempt {attempt+1})...")
-                await page.goto(url, timeout=60000, wait_until="networkidle")
-                await asyncio.sleep(8)
+        log.info(f"Loading: {url[:100]}")
+        try:
+            await page.goto(url, timeout=60000, wait_until="networkidle")
+            await asyncio.sleep(10)
 
-                # Scroll to load all results
-                for _ in range(5):
-                    await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    await asyncio.sleep(1)
+            # Take screenshot for debugging
+            await page.screenshot(path="docs/debug_screenshot.png", full_page=True)
+            log.info("Screenshot saved to docs/debug_screenshot.png")
 
-                rows = await page.query_selector_all("tbody tr")
-                log.info(f"Found {len(rows)} HTML rows after scroll")
+            # Log page title and content length
+            title = await page.title()
+            content = await page.content()
+            log.info(f"Page title: {title}")
+            log.info(f"Page content length: {len(content)}")
+            log.info(f"API records so far: {len(api_records)}")
 
-                for row in rows:
-                    try:
-                        text = await row.inner_text()
-                        if len(text.strip()) < 3: continue
-                        cells = [c.strip() for c in text.split("\t") if c.strip()]
-                        if len(cells) < 2: cells = [c.strip() for c in text.split("\n") if c.strip()]
-                        date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", text)
-                        filed = ""
-                        if date_match:
-                            try: filed = datetime.strptime(date_match.group(1), "%m/%d/%Y").strftime("%Y-%m-%d")
-                            except: pass
-                        amt_match = re.search(r"\$[\d,]+", text)
-                        amount = 0.0
-                        if amt_match:
-                            try: amount = float(re.sub(r"[^0-9.]", "", amt_match.group()) or 0)
-                            except: pass
-                        link = await row.query_selector("a")
-                        clerk_url = ""
-                        if link:
-                            href = await link.get_attribute("href") or ""
-                            clerk_url = href if href.startswith("http") else f"{CLERK_BASE}{href}" if href else ""
-                        if filed or (cells and len(cells[0]) > 3):
-                            records.append({"doc_num":cells[0] if cells else "","doc_type":"","cat":"","cat_label":"Court Record","filed":filed,"owner":cells[2] if len(cells)>2 else "","grantee":cells[3] if len(cells)>3 else "","amount":amount,"legal":"","clerk_url":clerk_url})
-                    except: continue
+            # Try multiple selectors
+            selectors = [
+                "tbody tr", ".result-row", "[class*='result']",
+                "[class*='card']", "[class*='record']", "tr[data-id]",
+                ".ng-scope", "[ng-repeat]", "[data-index]",
+            ]
+            for sel in selectors:
+                rows = await page.query_selector_all(sel)
+                if rows:
+                    log.info(f"Selector '{sel}' found {len(rows)} elements")
 
-                if records or api_records:
-                    log.info(f"Got {len(records)} HTML + {len(api_records)} API records")
-                    break
-            except Exception as e:
-                log.warning(f"Attempt {attempt+1}: {e}")
-                await asyncio.sleep(3)
+            # Try to extract text from any result elements
+            all_text = await page.evaluate("""() => {
+                const results = [];
+                document.querySelectorAll('tr, [class*="result"], [class*="card"], [class*="record"]').forEach(el => {
+                    const t = el.innerText;
+                    if (t && t.trim().length > 20) results.push(t.trim().substring(0, 200));
+                });
+                return results.slice(0, 20);
+            }""")
+            log.info(f"Found {len(all_text)} text elements")
+            for t in all_text[:5]:
+                log.info(f"Element text: {t[:100]}")
 
-        # Individual doc type searches for more coverage
-        log.info("Running individual doc type searches for more coverage...")
+        except Exception as e:
+            log.error(f"Main page load error: {e}")
+
+        # Individual searches
+        log.info("Individual doc type searches...")
         for doc_code, doc_label in TARGET_DOC_TYPES.items():
             try:
-                url = f"{CLERK_BASE}/results?department=RP&_docTypes={doc_code}&recordedDateRange={date_from},{date_to}&searchType=quickSearch&limit=200&offset=0&viewType=list"
-                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                await asyncio.sleep(4)
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await asyncio.sleep(2)
-                rows = await page.query_selector_all("tbody tr")
-                count = 0
-                for row in rows:
-                    try:
-                        text = await row.inner_text()
-                        if len(text.strip()) < 3: continue
-                        cells = [c.strip() for c in text.split("\t") if c.strip()]
-                        if len(cells) < 2: cells = [c.strip() for c in text.split("\n") if c.strip()]
-                        date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", text)
-                        filed = ""
-                        if date_match:
-                            try: filed = datetime.strptime(date_match.group(1), "%m/%d/%Y").strftime("%Y-%m-%d")
-                            except: pass
-                        link = await row.query_selector("a")
-                        clerk_url = ""
-                        if link:
-                            href = await link.get_attribute("href") or ""
-                            clerk_url = href if href.startswith("http") else f"{CLERK_BASE}{href}" if href else ""
-                        if filed or (cells and len(cells[0]) > 3):
-                            records.append({"doc_num":cells[0] if cells else "","doc_type":doc_code,"cat":doc_code,"cat_label":doc_label,"filed":filed,"owner":cells[2] if len(cells)>2 else "","grantee":cells[3] if len(cells)>3 else "","amount":0.0,"legal":"","clerk_url":clerk_url})
-                            count += 1
-                    except: continue
-                if count: log.info(f"{doc_code}: {count} records")
+                iurl = f"{CLERK_BASE}/results?department=RP&_docTypes={doc_code}&recordedDateRange={date_from},{date_to}&searchType=quickSearch&limit=200&offset=0&viewType=list"
+                await page.goto(iurl, timeout=30000, wait_until="domcontentloaded")
+                await asyncio.sleep(5)
+
+                # Try all selectors
+                for sel in ["tbody tr", ".result-row", "[class*='result']", "tr[data-id]"]:
+                    rows = await page.query_selector_all(sel)
+                    if not rows: continue
+                    count = 0
+                    for row in rows:
+                        try:
+                            text = await row.inner_text()
+                            if len(text.strip()) < 5: continue
+                            cells = [c.strip() for c in re.split(r'\t|\n', text) if c.strip()]
+                            if len(cells) < 2: continue
+                            date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", text)
+                            filed = ""
+                            if date_match:
+                                try: filed = datetime.strptime(date_match.group(1), "%m/%d/%Y").strftime("%Y-%m-%d")
+                                except: pass
+                            link = await row.query_selector("a")
+                            clerk_url = ""
+                            if link:
+                                href = await link.get_attribute("href") or ""
+                                clerk_url = href if href.startswith("http") else f"{CLERK_BASE}{href}" if href else ""
+                            if filed or (cells and len(cells[0]) > 3):
+                                records.append({"doc_num":cells[0],"doc_type":doc_code,"cat":doc_code,"cat_label":doc_label,"filed":filed,"owner":cells[2] if len(cells)>2 else "","grantee":cells[3] if len(cells)>3 else "","amount":0.0,"legal":"","clerk_url":clerk_url})
+                                count += 1
+                        except: continue
+                    if count:
+                        log.info(f"{doc_code} ({sel}): {count} records")
+                        break
                 await asyncio.sleep(0.5)
             except Exception as e:
                 log.warning(f"{doc_code}: {e}")
@@ -177,7 +201,7 @@ async def scrape_with_playwright(lookback_days=30):
         if key not in seen:
             seen.add(key)
             unique.append(r)
-    log.info(f"Total unique: {len(unique)}")
+    log.info(f"Total unique: {len(unique)} ({len(records)} HTML + {len(api_records)} API)")
     return unique
 
 def build_output(records):
@@ -185,10 +209,9 @@ def build_output(records):
     for rec in records:
         try:
             score, flags = compute_score(rec)
-            rec["score"] = score
-            rec["flags"] = flags
-            rec.setdefault("prop_address",""); rec.setdefault("prop_city",""); rec.setdefault("prop_state","TX"); rec.setdefault("prop_zip","")
-            rec.setdefault("mail_address",""); rec.setdefault("mail_city",""); rec.setdefault("mail_state","TX"); rec.setdefault("mail_zip","")
+            rec["score"] = score; rec["flags"] = flags
+            for k in ["prop_address","prop_city","prop_state","prop_zip","mail_address","mail_city","mail_state","mail_zip"]:
+                rec.setdefault(k, "" if k not in ["prop_state","mail_state"] else "TX")
             enriched.append(rec)
         except: continue
     enriched.sort(key=lambda r: r.get("score",0), reverse=True)
