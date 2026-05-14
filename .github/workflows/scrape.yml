@@ -18,7 +18,7 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 lxml playwright
+          pip install requests beautifulsoup4 lxml playwright openpyxl
           python -m playwright install --with-deps chromium
       - name: Run scraper
         run: python scraper/fetch.py
@@ -26,6 +26,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/records.json data/records.json data/ghl_export.csv || true
+          git add docs/records.json data/records.json data/ghl_export.csv docs/debug_screenshot.png || true
           git diff --staged --quiet || git commit -m "Auto-update: Cameron County leads $(date -u +%Y-%m-%d)"
           git push
