@@ -1,58 +1,8 @@
 {
-  "fetched_at": "2026-05-14T12:22:23.594791",
+  "fetched_at": "2026-05-14T20:07:38.767543",
   "source": "Cameron County Clerk Portal",
-  "date_range": "2026-05-07 to 2026-05-14",
-  "total": 2,
+  "date_range": "2026-04-14 to 2026-05-14",
+  "total": 0,
   "with_address": 0,
-  "records": [
-    {
-      "doc_num": "SANCHEZ CONSUELO",
-      "doc_type": "LP",
-      "cat": "LP",
-      "cat_label": "Lis Pendens",
-      "filed": "2026-05-08",
-      "owner": "LIS PENDENS",
-      "grantee": "5/8/2026",
-      "amount": 0.0,
-      "legal": "",
-      "clerk_url": "",
-      "prop_address": "",
-      "prop_city": "",
-      "prop_state": "TX",
-      "prop_zip": "",
-      "mail_address": "",
-      "mail_city": "",
-      "mail_state": "TX",
-      "mail_zip": "",
-      "score": 45,
-      "flags": [
-        "Lis pendens",
-        "New this week"
-      ]
-    },
-    {
-      "doc_num": "Loading Results for 05/07/2026-05/14/2026",
-      "doc_type": "",
-      "cat": "",
-      "cat_label": "Court Record",
-      "filed": "2026-05-07",
-      "owner": "",
-      "grantee": "",
-      "amount": 0.0,
-      "legal": "",
-      "clerk_url": "",
-      "prop_address": "",
-      "prop_city": "",
-      "prop_state": "TX",
-      "prop_zip": "",
-      "mail_address": "",
-      "mail_city": "",
-      "mail_state": "TX",
-      "mail_zip": "",
-      "score": 35,
-      "flags": [
-        "New this week"
-      ]
-    }
-  ]
+  "records": []
 }
