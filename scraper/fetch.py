@@ -5,6 +5,7 @@ import requests
 
 LOOKBACK_DAYS = int(os.environ.get('LOOKBACK_DAYS', '30'))
 CLERK_BASE = "https://cameron.tx.publicsearch.us"
+PARCEL_URL = "https://drive.google.com/uc?export=download&id=1vn27kc72OHWxoW6VpqZaeLTeh7P-DJqv&confirm=t"
 
 TARGET_DOC_TYPES = {
     "LP":"Lis Pendens","NOFC":"Notice of Foreclosure","TAXDEED":"Tax Deed",
@@ -16,6 +17,59 @@ TARGET_DOC_TYPES = {
 OUTPUT_DIRS = ["docs", "data"]
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+
+
+def download_parcel_data():
+    import zipfile, io, csv
+    log.info("Downloading Cameron CAD parcel data from Google Drive...")
+    parcel_map = {}
+    try:
+        session = requests.Session()
+        r = session.get(PARCEL_URL, timeout=120, stream=True, headers={"User-Agent":"Mozilla/5.0"})
+        # Handle Google Drive confirm page
+        if "confirm" not in r.url and len(r.content) < 10000:
+            import re
+            confirm = re.search(r"confirm=([^&]+)", r.text)
+            if confirm:
+                r = session.get(PARCEL_URL + "&confirm=" + confirm.group(1), timeout=120, stream=True)
+        r.raise_for_status()
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        csv_name = next((n for n in zf.namelist() if n.lower().endswith(".csv")), None)
+        if not csv_name:
+            log.warning("No CSV in parcel zip")
+            return parcel_map
+        log.info(f"Parsing parcel file: {csv_name}")
+        with zf.open(csv_name) as f:
+            content = f.read().decode("utf-8", errors="ignore")
+            reader = csv.DictReader(io.StringIO(content))
+            for row in reader:
+                try:
+                    owner = (row.get("OWNER") or row.get("OWN1") or "").strip().upper()
+                    if not owner: continue
+                    record = {
+                        "prop_address": (row.get("SITE_ADDR") or row.get("SITEADDR") or "").strip(),
+                        "prop_city":    (row.get("SITE_CITY") or row.get("SITECITY") or "BROWNSVILLE").strip(),
+                        "prop_state":   "TX",
+                        "prop_zip":     (row.get("SITE_ZIP") or row.get("SITEZIP") or row.get("ZIP") or "").strip(),
+                        "mail_address": (row.get("ADDR_1") or row.get("MAILADR1") or "").strip(),
+                        "mail_city":    (row.get("CITY") or row.get("MAILCITY") or "").strip(),
+                        "mail_state":   (row.get("STATE") or "TX").strip(),
+                        "mail_zip":     (row.get("ZIP") or row.get("MAILZIP") or "").strip(),
+                    }
+                    parcel_map[owner] = record
+                    last = owner.split(",")[0].strip()
+                    if last and last not in parcel_map: parcel_map[last] = record
+                except: continue
+        log.info(f"Loaded {len(parcel_map)} parcel records")
+    except Exception as e:
+        log.warning(f"Parcel download failed: {e}")
+    return parcel_map
+
+def lookup_parcel(owner, parcel_map):
+    if not owner or not parcel_map: return {}
+    ou = owner.strip().upper()
+    if ou in parcel_map: return parcel_map[ou]
+    return parcel_map.get(ou.split(",")[0].strip(), {})
 
 def compute_score(record):
     score, flags = 30, []
@@ -204,14 +258,18 @@ async def scrape_with_playwright(lookback_days=30):
     log.info(f"Total unique: {len(unique)} ({len(records)} HTML + {len(api_records)} API)")
     return unique
 
-def build_output(records):
+def build_output(records, parcel_map=None):
+    if parcel_map is None: parcel_map = {}
     enriched = []
     for rec in records:
         try:
-            score, flags = compute_score(rec)
-            rec["score"] = score; rec["flags"] = flags
+            parcel = lookup_parcel(rec.get("owner",""), parcel_map)
+            if parcel:
+                rec.update({"prop_address":parcel.get("prop_address",""),"prop_city":parcel.get("prop_city",""),"prop_state":parcel.get("prop_state","TX"),"prop_zip":parcel.get("prop_zip",""),"mail_address":parcel.get("mail_address",""),"mail_city":parcel.get("mail_city",""),"mail_state":parcel.get("mail_state","TX"),"mail_zip":parcel.get("mail_zip","")})
             for k in ["prop_address","prop_city","prop_state","prop_zip","mail_address","mail_city","mail_state","mail_zip"]:
                 rec.setdefault(k, "" if k not in ["prop_state","mail_state"] else "TX")
+            score, flags = compute_score(rec)
+            rec["score"] = score; rec["flags"] = flags
             enriched.append(rec)
         except: continue
     enriched.sort(key=lambda r: r.get("score",0), reverse=True)
@@ -240,8 +298,9 @@ def export_ghl_csv(output):
 
 def main():
     log.info("=== Cameron County Motivated Seller Scraper ===")
+    parcel_map = download_parcel_data()
     records = asyncio.run(scrape_with_playwright(LOOKBACK_DAYS))
-    output = build_output(records)
+    output = build_output(records, parcel_map)
     save_outputs(output)
     export_ghl_csv(output)
     log.info(f"=== Done: {output['total']} records ===")
