@@ -70,8 +70,7 @@ def download_parcel_data():
                         text_rows.append(','.join(headers))
                         for row in rows_data[1:]:
                             text_rows.append(','.join([str(c.value or '').replace(',','') for c in row]))
-                        text = '
-'.join(text_rows)
+                        text = chr(10).join(text_rows)
                     else:
                         log.warning(f'No CSV or XLSX in zip: {zf.namelist()[:5]}')
                         return parcel_map
@@ -87,16 +86,15 @@ def download_parcel_data():
                     text_rows = [','.join(headers)]
                     for row in rows_data[1:]:
                         text_rows.append(','.join([str(c.value or '').replace(',','') for c in row]))
-                    text = '
-'.join(text_rows)
+                    text = chr(10).join(text_rows)
                 except Exception as xe:
                     log.error(f'Excel parse failed: {xe}')
                     return parcel_map
             reader = csv.DictReader(io.StringIO(text))
-                cols = reader.fieldnames or []
-                log.info(f"CSV columns: {cols[:10]}")
-                for row in reader:
-                    try:
+            cols = reader.fieldnames or []
+            log.info(f"CSV columns: {cols[:10]}")
+            for row in reader:
+                try:
                         owner = (row.get('OWNER') or row.get('OWN1') or row.get('OWNER_NAME') or '').strip().upper()
                         if not owner: continue
                         record = {
@@ -113,7 +111,7 @@ def download_parcel_data():
                         last = owner.split(',')[0].strip()
                         if last and last not in parcel_map:
                             parcel_map[last] = record
-                    except: continue
+                except: continue
             log.info(f"Loaded {len(parcel_map)} parcel records")
         else:
             log.error("Could not download valid zip file from Google Drive")
