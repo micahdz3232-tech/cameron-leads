@@ -72,8 +72,26 @@ def download_parcel_data():
                             text_rows.append(','.join([str(c.value or '').replace(',','') for c in row]))
                         text = chr(10).join(text_rows)
                     else:
-                        log.warning(f'No CSV or XLSX in zip: {zf.namelist()[:5]}')
-                        return parcel_map
+                        # It IS an xlsx file (xlsx = zip with xl/ folder)
+                        if any('xl/' in n for n in zf.namelist()):
+                            log.info('Detected xlsx format, parsing with openpyxl...')
+                            import openpyxl
+                            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+                            ws = wb.active
+                            rows_data = list(ws.rows)
+                            if not rows_data:
+                                log.warning('Empty worksheet')
+                                return parcel_map
+                            headers = [str(c.value or '').strip() for c in rows_data[0]]
+                            log.info(f'Excel columns: {headers[:10]}')
+                            text_rows = [','.join(headers)]
+                            for row in rows_data[1:]:
+                                text_rows.append(','.join([str(c.value or '').replace(',','') for c in row]))
+                            text = chr(10).join(text_rows)
+                            wb.close()
+                        else:
+                            log.warning(f'Unknown zip contents: {zf.namelist()[:5]}')
+                            return parcel_map
             except Exception as ze:
                 log.warning(f'Not a zip: {ze} - trying as xlsx directly')
                 try:
